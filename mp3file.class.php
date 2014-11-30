@@ -1,10 +1,12 @@
 <?php
 /*
-sample usage:
+//sample usage:
 $mp3file = new MP3File("npr_304314290.mp3");//http://www.npr.org/rss/podcast.php?id=510282
-$duration = $mp3file->getDuration();//(slower) for VBR (or CBR)
-echo "duration: $duration seconds"."\n";
-echo sprintf("%d:%02d", $duration/60, $duration%60);
+$duration1 = $mp3file->getDurationEstimate();//(faster) for CBR only
+$duration2 = $mp3file->getDuration();//(slower) for VBR (or CBR)
+echo "duration: $duration1 seconds"."\n";
+echo "estimate: $duration2 seconds"."\n";
+echo MP3File::formatTime($duration2)."\n";
 **/
 
 class MP3File
@@ -16,30 +18,62 @@ class MP3File
 		$this->filename = $filename;
 	}
 
-	//Read entire file into memory, might not be great for large MP3s
-	public function getDuration()
+	public static function formatTime($duration) //as hh:mm:ss
 	{
-		$block = file_get_contents($this->filename);
+		//return sprintf("%d:%02d", $duration/60, $duration%60);
+		$hours = floor($duration / 3600);
+		$minutes = floor( ($duration - ($hours * 3600)) / 60);
+		$seconds = $duration - ($hours * 3600) - ($minutes * 60);
+		return sprintf("%02d:%02d:%02d", $hours, $minutes, $seconds);
+	}
+
+	//Read first mp3 frame only...  use for CBR constant bit rate MP3s
+	public function getDurationEstimate()
+	{
+		return $this->getDuration($use_cbr_estimate=true);
+	}
+
+	//Read entire file, frame by frame... ie: Variable Bit Rate (VBR)
+	public function getDuration($use_cbr_estimate=false)
+	{
+		$fd = fopen($this->filename, "rb");
 
 		$duration=0;
+		$block = fread($fd, 100);
 		$offset = $this->skipID3v2Tag($block);
-		for($i=$offset, $ix=strlen($block)-4; $i<$ix; $i++)
+		fseek($fd, $offset, SEEK_SET);
+		while (!feof($fd))
 		{
+			$block = fread($fd, 10);
+			if (strlen($block)<10) { break; }
 			//looking for 1111 1111 111 (frame synchronization bits)
-			if ($block[$i]=="\xff" && (ord($block[$i+1])&0xe0) )
+			else if ($block[0]=="\xff" && (ord($block[1])&0xe0) )
 			{
-				$info = self::parseFrameHeader(substr($block, $i, 4));
-				$info['ByteStart'] = $i;
-				$i+=$info['Framesize'];
-				$i--;//because for loop will $i++;
+				$info = self::parseFrameHeader(substr($block, 0, 4));
+				fseek($fd, $info['Framesize']-10, SEEK_CUR);
 				$duration += ( $info['Samples'] / $info['Sampling Rate'] );
 			}
-			else if (substr($block, $i, 3)=='TAG')
+			else if (substr($block, 0, 3)=='TAG')
 			{
-				$i+=128;//skip over id3v1 tag size
+				fseek($fd, 128-10, SEEK_CUR);//skip over id3v1 tag size
+			}
+			else
+			{
+				fseek($fd, -9, SEEK_CUR);
+			}
+			if ($use_cbr_estimate && !empty($info))
+			{ 
+				return $this->estimateDuration($info['Bitrate'],$offset); 
 			}
 		}
 		return round($duration);
+	}
+
+	private function estimateDuration($bitrate,$offset)
+	{
+		$kbps = ($bitrate*1000)/8;
+		$datasize = filesize($this->filename) - $offset;
+		return round($datasize / $kbps);
 	}
 
 	private function skipID3v2Tag(&$block)
