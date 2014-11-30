@@ -1,343 +1,152 @@
 <?php
 /*
-php5 class (will not work in php4)
-for detecting bitrate and duration of regular mp3 files (not VBR files)
-*/
- 
-//-----------------------------------------------------------------------------
-class mp3file
+sample usage:
+$mp3file = new MP3File("npr_304314290.mp3");//http://www.npr.org/rss/podcast.php?id=510282
+$duration = $mp3file->getDuration();//(slower) for VBR (or CBR)
+echo "duration: $duration seconds"."\n";
+echo sprintf("%d:%02d", $duration/60, $duration%60);
+**/
+
+class MP3File
 {
-    protected $block;
-    protected $blockpos;
-    protected $blockmax;
-    protected $blocksize;
-    protected $fd;
-    protected $bitpos;
-    protected $mp3data;
-    public function __construct($filename)
-    {
-        $this->powarr  = array(0=>1,1=>2,2=>4,3=>8,4=>16,5=>32,6=>64,7=>128);
-        $this->blockmax= 1024;
- 
-        $this->mp3data = array();
-        $this->mp3data['Filesize'] = filesize($filename);
- 
-        $this->fd = fopen($filename,'rb');
-        $this->prefetchblock();
-        $this->readmp3frame();
-    }
-    public function __destruct()
-    {
-        fclose($this->fd);
-    }
-    //-------------------
-    public function get_metadata()
-    {
-        return $this->mp3data;
-    }
-    protected function readmp3frame()
-    {
-        $iscbrmp3=true;
-        if ($this->startswithid3())
-            $this->skipid3tag();
-        else if ($this->containsvbrxing())
-        {
-            $this->mp3data['Encoding'] = 'VBR';
-            $iscbrmp3=false;
-        }
-        else if ($this->startswithpk())
-        {
-            $this->mp3data['Encoding'] = 'Unknown';
-            $iscbrmp3=false;
-        }
- 
-        if ($iscbrmp3)
-        {
-            $i = 0;
-            $max=5000;
-            //look in 5000 bytes...
-            //the largest framesize is 4609bytes(256kbps@8000Hz  mp3)
-            for($i=0; $i<$max; $i++)
-            {
-                //looking for 1111 1111 111 (frame synchronization bits)                
-                if ($this->getnextbyte()==0xFF)
-                    if ($this->getnextbit() && $this->getnextbit() && $this->getnextbit())
-                        break;
-            }
-            if ($i==$max)
-                $iscbrmp3=false;
-        }
- 
-        if ($iscbrmp3)
-        {
-            $this->mp3data['Encoding'         ] = 'CBR';
-            $this->mp3data['MPEG version'     ] = $this->getnextbits(2);
-            $this->mp3data['Layer Description'] = $this->getnextbits(2);
-            $this->mp3data['Protection Bit'   ] = $this->getnextbits(1);
-            $this->mp3data['Bitrate Index'    ] = $this->getnextbits(4);
-            $this->mp3data['Sampling Freq Idx'] = $this->getnextbits(2);
-            $this->mp3data['Padding Bit'      ] = $this->getnextbits(1);
-            $this->mp3data['Private Bit'      ] = $this->getnextbits(1);
-            $this->mp3data['Channel Mode'     ] = $this->getnextbits(2);
-            $this->mp3data['Mode Extension'   ] = $this->getnextbits(2);
-            $this->mp3data['Copyright'        ] = $this->getnextbits(1);
-            $this->mp3data['Original Media'   ] = $this->getnextbits(1);
-            $this->mp3data['Emphasis'         ] = $this->getnextbits(1);
-            $this->mp3data['Bitrate'          ] = mp3file::bitratelookup($this->mp3data);
-            $this->mp3data['Sampling Rate'    ] = mp3file::samplelookup($this->mp3data);
-            $this->mp3data['Frame Size'       ] = mp3file::getframesize($this->mp3data);
-            $this->mp3data['Length'           ] = mp3file::getduration($this->mp3data,$this->tell2());
-            $this->mp3data['Length mm:ss'     ] = mp3file::seconds_to_mmss($this->mp3data['Length']);
- 
-            if ($this->mp3data['Bitrate'      ]=='bad'     ||
-                $this->mp3data['Bitrate'      ]=='free'    ||
-                $this->mp3data['Sampling Rate']=='unknown' ||
-                $this->mp3data['Frame Size'   ]=='unknown' ||
-                $this->mp3data['Length'     ]=='unknown')
-            $this->mp3data = array('Filesize'=>$this->mp3data['Filesize'], 'Encoding'=>'Unknown');
-        }
-        else
-        {
-            if(!isset($this->mp3data['Encoding']))
-                $this->mp3data['Encoding'] = 'Unknown';
-        }
-    }
-    protected function tell()
-    {
-        return ftell($this->fd);
-    }
-    protected function tell2()
-    {
-        return ftell($this->fd)-$this->blockmax +$this->blockpos-1;
-    }
-    protected function startswithid3()
-    {
-        return ($this->block[1]==73 && //I
-                $this->block[2]==68 && //D
-                $this->block[3]==51);  //3
-    }
-    protected function startswithpk()
-    {
-        return ($this->block[1]==80 && //P
-                $this->block[2]==75);  //K
-    }
-    protected function containsvbrxing()
-    {
-        //echo "<!--".$this->block[37]." ".$this->block[38]."-->";
-        //echo "<!--".$this->block[39]." ".$this->block[40]."-->";
-        return(
-               ($this->block[37]==88  && //X 0x58
-                $this->block[38]==105 && //i 0x69
-                $this->block[39]==110 && //n 0x6E
-                $this->block[40]==103)   //g 0x67
-/*               ||
-               ($this->block[21]==88  && //X 0x58
-                $this->block[22]==105 && //i 0x69
-                $this->block[23]==110 && //n 0x6E
-                $this->block[24]==103)   //g 0x67*/
-              );  
- 
-    }
-    protected function debugbytes()
-    {
-        for($j=0; $j<10; $j++)
-        {
-            for($i=0; $i<8; $i++)
-            {
-                if ($i==4) echo " ";
-                echo $this->getnextbit();
-            }
-            echo "<BR>";
-        }
-    }
-    protected function prefetchblock()
-    {
-        $block = fread($this->fd, $this->blockmax);
-        $this->blocksize = strlen($block);
-        $this->block = unpack("C*", $block);
-        $this->blockpos=0;
-    }
-    protected function skipid3tag()
-    {
-        $bits=$this->getnextbits(24);//ID3
-        $bits.=$this->getnextbits(24);//v.v flags
- 
-        //3 bytes 1 version byte 2 byte flags
-        $arr = array();
-        $arr['ID3v2 Major version'] = bindec(substr($bits,24,8));
-        $arr['ID3v2 Minor version'] = bindec(substr($bits,32,8));
-        $arr['ID3v2 flags'        ] = bindec(substr($bits,40,8));
-        if (substr($bits,40,1)) $arr['Unsynchronisation']=true;
-        if (substr($bits,41,1)) $arr['Extended header']=true;
-        if (substr($bits,42,1)) $arr['Experimental indicator']=true;
-        if (substr($bits,43,1)) $arr['Footer present']=true;
- 
-        $size = "";
-        for($i=0; $i<4; $i++)
-        {
-            $this->getnextbit();//skip this bit, should be 0
-            $size.= $this->getnextbits(7);
-        }
- 
-        $arr['ID3v2 Tags Size']=bindec($size);//now the size is in bytes;
-        if ($arr['ID3v2 Tags Size'] - $this->blockmax>0)
-        {
-            fseek($this->fd, $arr['ID3v2 Tags Size']+10 );
-            $this->prefetchblock();
-            if (isset($arr['Footer present']) && $arr['Footer present'])
-            {
-                for($i=0; $i<10; $i++)
-                    $this->getnextbyte();//10 footer bytes
-            }
-        }
-        else
-        {
-            for($i=0; $i<$arr['ID3v2 Tags Size']; $i++)
-                $this->getnextbyte();
-        }
-    }
- 
-    protected function getnextbit()
-    {
-        if ($this->bitpos==8)
-            return false;
- 
-        $b=0;
-        $whichbit = 7-$this->bitpos;
-        $mult = $this->powarr[$whichbit]; //$mult = pow(2,7-$this->pos);
-        $b = $this->block[$this->blockpos+1] & $mult;
-        $b = $b >> $whichbit;
-        $this->bitpos++;
- 
-        if ($this->bitpos==8)
-        {
-            $this->blockpos++;
- 
-            if ($this->blockpos==$this->blockmax) //end of block reached
-            {
-                $this->prefetchblock();
-            }
-            else if ($this->blockpos==$this->blocksize)
-            {//end of short block reached (shorter than blockmax)
-                return;//eof
-            }
- 
-            $this->bitpos=0;
-        }
-        return $b;
-    }
-    protected function getnextbits($n=1)
-    {
-        $b="";
-        for($i=0; $i<$n; $i++)
-            $b.=$this->getnextbit();
-        return $b;
-    }
-    protected function getnextbyte()
-    {
-        if ($this->blockpos>=$this->blocksize)
-            return;
- 
-        $this->bitpos=0;
-        $b=$this->block[$this->blockpos+1];
-        $this->blockpos++;
-        return $b;
-    }
-    //-----------------------------------------------------------------------------
-    public static function is_layer1(&$mp3) { return ($mp3['Layer Description']=='11'); }
-    public static function is_layer2(&$mp3) { return ($mp3['Layer Description']=='10'); }
-    public static function is_layer3(&$mp3) { return ($mp3['Layer Description']=='01'); }
-    public static function is_mpeg10(&$mp3)  { return ($mp3['MPEG version']=='11'); }
-    public static function is_mpeg20(&$mp3)  { return ($mp3['MPEG version']=='10'); }
-    public static function is_mpeg25(&$mp3)  { return ($mp3['MPEG version']=='00'); }
-    public static function is_mpeg20or25(&$mp3)  { return ($mp3['MPEG version']{1}=='0'); }
-    //-----------------------------------------------------------------------------
-    public static function bitratelookup(&$mp3)
-    {
-        //bits               V1,L1  V1,L2  V1,L3  V2,L1  V2,L2&L3
-        $array = array();
-        $array['0000']=array('free','free','free','free','free');
-        $array['0001']=array(  '32',  '32',  '32',  '32',   '8');
-        $array['0010']=array(  '64',  '48',  '40',  '48',  '16');
-        $array['0011']=array(  '96',  '56',  '48',  '56',  '24');
-        $array['0100']=array( '128',  '64',  '56',  '64',  '32');
-        $array['0101']=array( '160',  '80',  '64',  '80',  '40');
-        $array['0110']=array( '192',  '96',  '80',  '96',  '48');
-        $array['0111']=array( '224', '112',  '96', '112',  '56');
-        $array['1000']=array( '256', '128', '112', '128',  '64');
-        $array['1001']=array( '288', '160', '128', '144',  '80');
-        $array['1010']=array( '320', '192', '160', '160',  '96');
-        $array['1011']=array( '352', '224', '192', '176', '112');
-        $array['1100']=array( '384', '256', '224', '192', '128');
-        $array['1101']=array( '416', '320', '256', '224', '144');
-        $array['1110']=array( '448', '384', '320', '256', '160');
-        $array['1111']=array( 'bad', 'bad', 'bad', 'bad', 'bad');
- 
-        $whichcolumn=-1;
-        if      (mp3file::is_mpeg10($mp3) && mp3file::is_layer1($mp3) )//V1,L1
-            $whichcolumn=0;
-        else if (mp3file::is_mpeg10($mp3) && mp3file::is_layer2($mp3) )//V1,L2
-            $whichcolumn=1;
-        else if (mp3file::is_mpeg10($mp3) && mp3file::is_layer3($mp3) )//V1,L3
-            $whichcolumn=2;
-        else if (mp3file::is_mpeg20or25($mp3) && mp3file::is_layer1($mp3) )//V2,L1
-            $whichcolumn=3;
-        else if (mp3file::is_mpeg20or25($mp3) && (mp3file::is_layer2($mp3) || mp3file::is_layer3($mp3)) )
-            $whichcolumn=4;//V2,   L2||L3
- 
-        if (isset($array[$mp3['Bitrate Index']][$whichcolumn]))
-            return $array[$mp3['Bitrate Index']][$whichcolumn];
-        else
-            return "bad";
-    }
-    //-----------------------------------------------------------------------------
-    public static function samplelookup(&$mp3)
-    {
-        //bits               MPEG1   MPEG2   MPEG2.5
-        $array = array();
-        $array['00'] =array('44100','22050','11025');
-        $array['01'] =array('48000','24000','12000');
-        $array['10'] =array('32000','16000','8000');
-        $array['11'] =array('res','res','res');
- 
-        $whichcolumn=-1;
-        if      (mp3file::is_mpeg10($mp3))
-            $whichcolumn=0;
-        else if (mp3file::is_mpeg20($mp3))
-            $whichcolumn=1;
-        else if (mp3file::is_mpeg25($mp3))
-            $whichcolumn=2;
- 
-        if (isset($array[$mp3['Sampling Freq Idx']][$whichcolumn]))
-            return $array[$mp3['Sampling Freq Idx']][$whichcolumn];
-        else
-            return 'unknown';
-    }
-    //-----------------------------------------------------------------------------
-    public static function getframesize(&$mp3)
-    {
-        if ($mp3['Sampling Rate']>0)
-        {
-            return  ceil((144 * $mp3['Bitrate']*1000)/$mp3['Sampling Rate']) + $mp3['Padding Bit'];
-        }
-        return 'unknown';
-    }
-    //-----------------------------------------------------------------------------
-    public static function getduration(&$mp3,$startat)
-    {
-        if ($mp3['Bitrate']>0)
-        {
-            $KBps = ($mp3['Bitrate']*1000)/8;
-            $datasize = ($mp3['Filesize'] - ($startat/8));
-            $length = $datasize / $KBps;
-            return sprintf("%d", $length);
-        }
-        return "unknown";
-    }
-    //-----------------------------------------------------------------------------
-    public static function seconds_to_mmss($duration)
-    {
-        return sprintf("%d:%02d", ($duration /60), $duration %60 );
-    }
+	protected $filename;
+
+	public function __construct($filename)
+	{
+		$this->filename = $filename;
+	}
+
+	//Read entire file into memory, might not be great for large MP3s
+	public function getDuration()
+	{
+		$block = file_get_contents($this->filename);
+
+		$duration=0;
+		$offset = $this->skipID3v2Tag($block);
+		for($i=$offset, $ix=strlen($block)-4; $i<$ix; $i++)
+		{
+			//looking for 1111 1111 111 (frame synchronization bits)
+			if ($block[$i]=="\xff" && (ord($block[$i+1])&0xe0) )
+			{
+				$info = self::parseFrameHeader(substr($block, $i, 4));
+				$info['ByteStart'] = $i;
+				$i+=$info['Framesize'];
+				$i--;//because for loop will $i++;
+				$duration += ( $info['Samples'] / $info['Sampling Rate'] );
+			}
+			else if (substr($block, $i, 3)=='TAG')
+			{
+				$i+=128;//skip over id3v1 tag size
+			}
+		}
+		return round($duration);
+	}
+
+	private function skipID3v2Tag(&$block)
+	{
+		if (substr($block, 0,3)=="ID3")
+		{
+			$id3v2_major_version = ord($block[3]);
+			$id3v2_minor_version = ord($block[4]);
+			$id3v2_flags = ord($block[5]);
+			$flag_unsynchronisation  = $id3v2_flags & 0x80 ? 1 : 0;
+			$flag_extended_header    = $id3v2_flags & 0x40 ? 1 : 0;
+			$flag_experimental_ind   = $id3v2_flags & 0x20 ? 1 : 0;
+			$flag_footer_present     = $id3v2_flags & 0x10 ? 1 : 0;
+			$z0 = ord($block[6]);
+			$z1 = ord($block[7]);
+			$z2 = ord($block[8]);
+			$z3 = ord($block[9]);
+			if ( (($z0&0x80)==0) && (($z1&0x80)==0) && (($z2&0x80)==0) && (($z3&0x80)==0) )
+			{
+				$header_size = 10;
+				$tag_size = (($z0&0x7f) * 2097152) + (($z1&0x7f) * 16384) + (($z2&0x7f) * 128) + ($z3&0x7f);
+				$footer_size = $flag_footer_present ? 10 : 0;
+				return $header_size + $tag_size + $footer_size;//bytes to skip
+			}
+		}
+		return 0;
+	}
+
+	public static function parseFrameHeader($fourbytes)
+	{
+		static $versions = array(
+			0x0=>'2.5',0x1=>'x',0x2=>'2',0x3=>'1', // x=>'reserved'
+		);
+		static $layers = array(
+			0x0=>'x',0x1=>'3',0x2=>'2',0x3=>'1', // x=>'reserved'
+		);
+		static $bitrates = array(
+			'V1L1'=>array(0,32,64,96,128,160,192,224,256,288,320,352,384,416,448),
+			'V1L2'=>array(0,32,48,56, 64, 80, 96,112,128,160,192,224,256,320,384),
+			'V1L3'=>array(0,32,40,48, 56, 64, 80, 96,112,128,160,192,224,256,320),
+			'V2L1'=>array(0,32,48,56, 64, 80, 96,112,128,144,160,176,192,224,256),
+			'V2L2'=>array(0, 8,16,24, 32, 40, 48, 56, 64, 80, 96,112,128,144,160),
+			'V2L3'=>array(0, 8,16,24, 32, 40, 48, 56, 64, 80, 96,112,128,144,160),
+		);
+		static $sample_rates = array(
+			'1'   => array(44100,48000,32000),
+			'2'   => array(22050,24000,16000),
+			'2.5' => array(11025,12000, 8000),
+		);
+		static $samples = array(
+			1 => array( 1 => 384, 2 =>1152, 3 =>1152, ), //MPEGv1,     Layers 1,2,3
+			2 => array( 1 => 384, 2 =>1152, 3 => 576, ), //MPEGv2/2.5, Layers 1,2,3
+		);
+		//$b0=ord($fourbytes[0]);//will always be 0xff
+		$b1=ord($fourbytes[1]);
+		$b2=ord($fourbytes[2]);
+		$b3=ord($fourbytes[3]);
+
+		$version_bits = ($b1 & 0x18) >> 3;
+		$version = $versions[$version_bits];
+		$simple_version =  ($version=='2.5' ? 2 : $version);
+
+		$layer_bits = ($b1 & 0x06) >> 1;
+		$layer = $layers[$layer_bits];
+
+		$protection_bit = ($b1 & 0x01);
+		$bitrate_key = sprintf('V%dL%d', $simple_version , $layer);
+		$bitrate_idx = ($b2 & 0xf0) >> 4;
+		$bitrate = isset($bitrates[$bitrate_key][$bitrate_idx]) ? $bitrates[$bitrate_key][$bitrate_idx] : 0;
+
+		$sample_rate_idx = ($b2 & 0x0c) >> 2;//0xc => b1100
+		$sample_rate = isset($sample_rates[$version][$sample_rate_idx]) ? $sample_rates[$version][$sample_rate_idx] : 0;
+		$padding_bit = ($b2 & 0x02) >> 1;
+		$private_bit = ($b2 & 0x01);
+		$channel_mode_bits = ($b3 & 0xc0) >> 6;
+		$mode_extension_bits = ($b3 & 0x30) >> 4;
+		$copyright_bit = ($b3 & 0x08) >> 3;
+		$original_bit = ($b3 & 0x04) >> 2;
+		$emphasis = ($b3 & 0x03);
+
+		$info = array();
+		$info['Version'] = $version;//MPEGVersion
+		$info['Layer'] = $layer;
+		//$info['Protection Bit'] = $protection_bit; //0=> protected by 2 byte CRC, 1=>not protected
+		$info['Bitrate'] = $bitrate;
+		$info['Sampling Rate'] = $sample_rate;
+		//$info['Padding Bit'] = $padding_bit;
+		//$info['Private Bit'] = $private_bit;
+		//$info['Channel Mode'] = $channel_mode_bits;
+		//$info['Mode Extension'] = $mode_extension_bits;
+		//$info['Copyright'] = $copyright_bit;
+		//$info['Original'] = $original_bit;
+		//$info['Emphasis'] = $emphasis;
+		$info['Framesize'] = self::framesize($layer, $bitrate, $sample_rate, $padding_bit);
+		$info['Samples'] = $samples[$simple_version][$layer];
+		return $info;
+	}
+
+	private static function framesize($layer, $bitrate,$sample_rate,$padding_bit)
+	{
+		if ($layer==1)
+			return intval(((12 * $bitrate*1000 /$sample_rate) + $padding_bit) * 4);
+		else //layer 2, 3
+			return intval(((144 * $bitrate*1000)/$sample_rate) + $padding_bit);
+	}
+
 }
-?>
+
+
+
