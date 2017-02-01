@@ -1,0 +1,8 @@
+{
+	"name": "php_mp3_duration/php_mp3_duration",
+	"type": "library",
+	"description": "get duration of a mp3 file",
+	"require": {
+		"php": "^5.3.3 || ^7.0"
+	}
+}
