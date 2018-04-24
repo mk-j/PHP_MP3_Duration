@@ -1,4 +1,5 @@
 <?php
+namespace MP3File;
 /**
  * MP3 File Class
  *  Using the MP3File Class you can calculate the MP3 file duration in PHP, aware of id3v1, id3v2, CBR, VBR
