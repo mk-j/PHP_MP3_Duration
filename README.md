@@ -7,7 +7,7 @@ Using the MP3File Class you can calculate the MP3 file duration in PHP, aware of
 ## Getting Started
 > Installing using Composer
 >```sh
->composer require MP3File/MP3File
+>composer require mp3file/mp3file
 >```
 
 ## How to load:
