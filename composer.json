@@ -1,8 +1,34 @@
 {
-	"name": "php_mp3_duration/php_mp3_duration",
+	"name": "mp3file/mp3file",
 	"type": "library",
-	"description": "get duration of a mp3 file",
+	"description": "Using the MP3File Class you can calculate the MP3 file duration in PHP, aware of id3v1, id3v2, CBR, VBR",
+	"keywords": [
+		"MP3",
+		"MP3 Duration"
+	],
+	"license": "MIT",
+	"authors": [
+	    {
+	      "name":     "Zedwood",
+	      "homepage": "http://www.zedwood.com/article/127/php-calculate-duration-of-mp3"
+	    },
+			{
+	      "name":     "Noah Halstead",
+	      "email": "nhalstead00@gmail.com"
+	    }
+	],
+	"repositories": [
+	    {
+	        "type": "git",
+	        "url": "https:\/\/github.com\/mk-j\/PHP_MP3_Duration"
+	    }
+	],
 	"require": {
 		"php": "^5.3.3 || ^7.0"
+	},
+	"autoload": {
+		"psr-4": {
+		    "MP3File\\": "src"
+		}
 	}
 }
